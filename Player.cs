@@ -10,8 +10,3 @@ public class Player
     public double Value { get; set; }
     public double TotalPredicted { get; set; }
 }
-
-
-
-
-

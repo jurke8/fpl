@@ -4,41 +4,83 @@ using FPL;
 
 //Configuration
 const double minTeamPrice = 98;
-
-// Console.WriteLine("Enter startGW: ");
-// var startGw = int.Parse(Console.ReadLine()!);
-// Console.WriteLine("Enter endGw: ");
-// var endGw = int.Parse(Console.ReadLine()!);
-// Console.WriteLine("Enter Max team price (example 82,5): ");
-// var maxTeamPrice = double.Parse(Console.ReadLine()!);
-// Console.WriteLine("Enter complexity: ");
-// var complexity = int.Parse(Console.ReadLine()!);
 Console.WriteLine("Importing and mapping players..");
 const int startGw = 1;
 const int endGw = 7;
 const int maxTeamPrice = 100;
-const int complexity = 100;
+const int complexity = 30;
 const int maxPlayersByTeam = 3;
+
+// Data source configuration
+const bool useLocalJson = true; // Set to false for production mode (download from URL)
+const string localJsonPath = "test.json";
+const string remoteJsonUrl = "https://www.fantasyfootballhub.co.uk/player-data/player-data.json";
+
 //Variables
-int numberOfGws = endGw - startGw + 1;
+const int numberOfGws = endGw - startGw + 1;
 var combinations = new List<Combination>();
 var players = new List<Player>();
-int minNumberOfPlayers = 0;
-int maxNumberOfPlayers = 0;
+int numberOfPlayers = 0;
+
 //Data import and mapping
-// var json = File.ReadAllText("player-data.json");
 Stopwatch stopWatch = new Stopwatch();
 stopWatch.Start();
-using HttpClient client = new HttpClient();
-string url = "https://www.fantasyfootballhub.co.uk/player-data/player-data.json";
-HttpResponseMessage response = await client.GetAsync(url);
-response.EnsureSuccessStatusCode();
-string responseBody = await response.Content.ReadAsStringAsync();
-var rawPlayers = JsonSerializer.Deserialize<List<Root>>(responseBody);
-if (rawPlayers != null)
+
+List<Root> rawPlayers;
+if (useLocalJson)
 {
-    players.AddRange(rawPlayers.Select(rawPlayer => PlayerMapper.MapRawDataToPlayer(rawPlayer, startGw, numberOfGws)));
+    Console.WriteLine($"Development mode: Loading data from local file '{localJsonPath}'");
+    if (!File.Exists(AppContext.BaseDirectory + localJsonPath))
+    {
+        Console.WriteLine($"Error: Local JSON file '{localJsonPath}' not found.");
+        Console.WriteLine("Please ensure the file exists or set useLocalJson to false for production mode.");
+        return;
+    }
+
+    var jsonContent = File.ReadAllText(localJsonPath);
+    rawPlayers = JsonSerializer.Deserialize<List<Root>>(jsonContent);
+    if (rawPlayers == null)
+    {
+        Console.WriteLine("Error: Failed to deserialize local JSON file.");
+        return;
+    }
+
+    Console.WriteLine($"Successfully loaded {rawPlayers.Count} players from local file.");
 }
+else
+{
+    Console.WriteLine($"Production mode: Downloading data from '{remoteJsonUrl}'");
+    using HttpClient client = new HttpClient();
+    try
+    {
+        HttpResponseMessage response = await client.GetAsync(remoteJsonUrl);
+        response.EnsureSuccessStatusCode();
+        string responseBody = await response.Content.ReadAsStringAsync();
+        rawPlayers = JsonSerializer.Deserialize<List<Root>>(responseBody);
+        if (rawPlayers == null)
+        {
+            Console.WriteLine("Error: Failed to deserialize downloaded JSON data.");
+            return;
+        }
+
+        Console.WriteLine($"Successfully downloaded and loaded {rawPlayers.Count} players.");
+    }
+    catch (HttpRequestException ex)
+    {
+        Console.WriteLine($"Error downloading data: {ex.Message}");
+        Console.WriteLine("Please check your internet connection or set useLocalJson to true for development mode.");
+        return;
+    }
+    catch (JsonException ex)
+    {
+        Console.WriteLine($"Error parsing JSON data: {ex.Message}");
+        return;
+    }
+}
+
+//Map raw data to players
+players.AddRange(rawPlayers.Select(rawPlayer => PlayerMapper.MapRawDataToPlayer(rawPlayer, startGw, numberOfGws)));
+
 
 //Data cleaning
 players.RemoveAll(p => p.CurrentPrice is null || p.Value == 0);
@@ -48,57 +90,40 @@ var topPointsPlayer = players.OrderByDescending(p => p.TotalPredicted).Take(200)
 var topValuePlayers = players.OrderByDescending(o => o.Value).Take(200);
 var concatedPlayers = topPointsPlayer.Concat(topValuePlayers).Distinct().OrderByDescending(p => p.Value).ToList();
 
-foreach (var player in IncludedPlayers.LockedPlayers)
+foreach (var player in IncludedPlayers.LockedPlayers.Keys.Union(IncludedPlayers.IncludeList).Distinct())
 {
-    if (!concatedPlayers.Select(s => s.Name).Contains(player.Key))
+    if (!concatedPlayers.Select(s => s.Name).Contains(player))
     {
-        concatedPlayers.AddRange(players.Where(p => p.Name == player.Key));
+        concatedPlayers.AddRange(players.Where(p => p.Name == player));
     }
 }
 
 //Removing unwanted players
 concatedPlayers.RemoveAll(r => IncludedPlayers.BanList.Contains(r.Name));
 //Selecting best players from position, price and club
-var b = concatedPlayers.GroupBy(p => new { p.Position, p.CurrentPrice, p.Club })
+var groupedPlayers = concatedPlayers.GroupBy(p => new { p.Position, p.CurrentPrice, p.Club })
     .Select(x => x.OrderByDescending(b => b.TotalPredicted).First());
 //Grouping players
-var playersByPosition = b.GroupBy(o => o.Position);
+var playersByPosition = groupedPlayers.GroupBy(o => o.Position);
 //Creating combinations of players per position
 foreach (var position in playersByPosition)
 {
     var combinationsByPosition = new List<List<Player>>();
 
-    switch (position.Key.ToString())
+    numberOfPlayers = position.Key.ToString() switch
     {
-        case "FWD":
-            minNumberOfPlayers = 3; // 3 - 15man, 1 - 11man
-            maxNumberOfPlayers = 3;
-            break;
-        case "MID":
-            minNumberOfPlayers = 5; // 5 - 15man, 2 - 11man
-            maxNumberOfPlayers = 5;
-            break;
-        case "DEF":
-            minNumberOfPlayers = 5; // 5 - 15man, 3 -11man
-            maxNumberOfPlayers = 5;
-            break;
-        case "GK":
-            minNumberOfPlayers = 2; // 2 - 15man, 1 - 11man 
-            maxNumberOfPlayers = 2; // 2 - 15man, 1 - 11man
-            break;
-    }
+        "GK" => 2,
+        "DEF" => 5,
+        "MID" => 5,
+        "FWD" => 3,
+        _ => numberOfPlayers
+    };
 
-    for (int i = minNumberOfPlayers; i <= maxNumberOfPlayers; i++)
-    {
-        combinationsByPosition.AddRange(Combinations<Player>.GetCombinations(
-            b.Where(p => p.Position.ToString().Equals(position.Key.ToString()))
-                .ToList(), i));
-    }
+    combinationsByPosition.AddRange(Combinations<Player>.GetCombinations(
+        groupedPlayers.Where(p => p.Position.ToString().Equals(position.Key.ToString()))
+            .ToList(), numberOfPlayers));
 
-    foreach (var combination in combinationsByPosition)
-    {
-        combinations.Add(new Combination(combination, startGw, endGw));
-    }
+    combinations.AddRange(combinationsByPosition.Select(combination => new Combination(combination, startGw, endGw)));
 }
 
 //Filtering teams with locked players:
@@ -154,7 +179,7 @@ if (validFwds.Count == 0)
 
 
 //Selecting top combinations by price and value with complexity parameter
-var gks = validGks.OrderByDescending(c => c.Value).Take(20).Union(
+var gks = validGks.OrderByDescending(c => c.Value).Take(complexity/5).Union(
         validGks.OrderByDescending(c => c.PredictedPoints / c.NumberOfPlayers)
             .Take(complexity))
     .Distinct().ToList();
@@ -275,8 +300,6 @@ if (IncludedPlayers.LockedPlayers.Count > 0)
 
 // Optimized team selection: Parallel processing and reduced memory allocations
 Console.WriteLine("Calculating predicted points and selecting top teams...");
-
-// Progress tracking variables
 var totalTeams = validTeamCombinations.Count;
 var processedTeams = 0;
 var progressLock = new object();
@@ -330,8 +353,12 @@ var teamsWithPoints = validTeamCombinations
     .Take(5)
     .ToList();
 
-// Final progress update
-Console.WriteLine($"Completed: {totalTeams} teams processed (100%)");
+stopWatch.Stop();
+// Get the elapsed time as a TimeSpan value.
+ts = stopWatch.Elapsed;
+// Format and display the TimeSpan value.
+elapsedTime = $"{ts.Hours:00}:{ts.Minutes:00}:{ts.Seconds:00}";
+Console.WriteLine($"Calculating predicted points for {totalTeams} teams completed in:" + elapsedTime);// Progress tracking variables
 
 //Printing
 foreach (var teamData in teamsWithPoints)

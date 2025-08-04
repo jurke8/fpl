@@ -1,26 +1,39 @@
 namespace FPL;
 
-public class IncludedPlayers
+public static class IncludedPlayers
 {
-    public static Dictionary<string, string> LockedPlayers = new()
+    public static readonly Dictionary<string, string> LockedPlayers = new()
     {
-        // { "Wirtz", "MID" },
+        { "Wirtz", "MID" },
         // { "Cucurella", "DEF" },
         // { "Rogers", "MID" },
         // { "Watkins", "FWD" },
         // { "Wood", "FWD" },
         // { "Kudus", "MID" }
     };
-
-    public static List<string> BanList = new()
-    {
+    public static readonly List<string> IncludeList = 
+    [
+        "Wirtz",
+        "Virgil",
+        "Paqueta",
+        "Rice",
+        "Ndiaye",
+        "Damsgaard",
+        "Xhaka",
+        "Gakpo",
+        "Enzo",
+        "Rogers",
+        "Gakpo"
+    ];
+    public static readonly List<string> BanList =
+    [
         "Martinez",
+        "M.Salah",
+        "Digne",
         "Pope",
         "Raya",
-        "Semenyo",
         "Raúl",
         "Gvardiol",
-        "M.Salah",
         "Colwill",
         "José Sá",
         "Mayenda",
@@ -36,5 +49,5 @@ public class IncludedPlayers
         "Ederson M.",
         "Saka",
         "A.Becker"
-    };
+    ];
 }
