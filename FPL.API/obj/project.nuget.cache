@@ -1,0 +1,11 @@
+{
+  "version": 2,
+  "dgSpecHash": "MlC+7K1cuBo=",
+  "success": true,
+  "projectFilePath": "/Users/amagiosijek/Downloads/FPL/FPL.API/FPL.API.csproj",
+  "expectedPackageFiles": [
+    "/Users/amagiosijek/.nuget/packages/microsoft.aspnetcore.openapi/9.0.7/microsoft.aspnetcore.openapi.9.0.7.nupkg.sha512",
+    "/Users/amagiosijek/.nuget/packages/microsoft.openapi/1.6.17/microsoft.openapi.1.6.17.nupkg.sha512"
+  ],
+  "logs": []
+}
