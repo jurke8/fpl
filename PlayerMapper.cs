@@ -10,7 +10,7 @@ public static class PlayerMapper
         var player = new Player
         {
             Name = rawData.webName,
-            Position = (PositionEnum)rawData.data.positionId,
+            Position = rawData.data.positionId is not null ? (PositionEnum)rawData.data.positionId : PositionEnum.GK,
             CurrentPrice = rawData.data.priceInfo?.Value,
             Predictions = predictions,
             TotalPredicted = predictions.Skip(startGw - 1).Take(numberOfGws).Sum()
@@ -23,7 +23,7 @@ public static class PlayerMapper
 
     private static List<double> MapPredictions(List<Prediction> rawPredictions)
     {
-        return rawPredictions?.Select(p => p.predicted_pts).ToList() ?? new List<double>();
+        return rawPredictions.Select(p => p.predicted_pts).ToList();
     }
 
 
@@ -56,7 +56,8 @@ public static class PlayerMapper
 
         return teamPrice;
     }
-    public static bool IsTeamValid(List<Combination> combinations, int maxPlayersByTeam = 3)
+
+    public static bool IsTeamValid(List<Combination> combinations, int maxPlayersByTeam)
     {
         // Optimized: Use Any with early termination and avoid creating intermediate collections
         return !combinations
@@ -64,10 +65,10 @@ public static class PlayerMapper
             .GroupBy(p => p.Club)
             .Any(c => c.Count() > maxPlayersByTeam);
     }
+
     private static List<Player> SelectOptimalTeam(List<Player> players, int gw)
     {
         // Position constraints
-        const int minGk = 1, maxGk = 1;
         const int minDef = 3, maxDef = 5;
         const int minMid = 2, maxMid = 5;
         const int minFwd = 1, maxFwd = 3;
@@ -81,7 +82,6 @@ public static class PlayerMapper
         // Single pass through players to group by position and sort by predicted points
         foreach (var player in players)
         {
-            var points = player.Predictions[gw];
             switch (player.Position)
             {
                 case PositionEnum.GK:
@@ -120,7 +120,7 @@ public static class PlayerMapper
                     {
                         var currentTeam = new List<Player>(11);
                         var totalPoints = 0.0;
-                        
+
                         // Add GK
                         if (gks.Count > 0)
                         {
@@ -172,7 +172,8 @@ public static class PlayerMapper
         return bestTeam;
     }
 
-    public static (double PredictedPoints, List<string> CaptainsByWeek, List<List<Player>> OptimalTeamsByWeek) CalculatePredictedPoints(List<Player> players, int startGw, int endGw, int? benchBoostGW = null)
+    private static (double PredictedPoints, List<string> CaptainsByWeek, List<List<Player>> OptimalTeamsByWeek)
+        CalculatePredictedPoints(List<Player> players, int startGw, int endGw, int? benchBoostGw = null)
     {
         int from = startGw - 1;
         int to = endGw - 1;
@@ -181,22 +182,22 @@ public static class PlayerMapper
         double captainPoints = 0;
         var captainsByWeek = new List<string>(to - from + 1); // Pre-allocate capacity
         var optimalTeamsByWeek = new List<List<Player>>(to - from + 1); // Pre-allocate capacity
-        
+
         // Pre-calculate optimal teams for each gameweek to avoid repeated calculations
         var optimalTeamsByGw = new Dictionary<int, List<Player>>();
-        
+
         for (var gw = from; gw <= to; gw++)
         {
             // Determine how many players to include for this GW
-            var playersToInclude = benchBoostGW.HasValue && benchBoostGW.Value == gw + 1 
+            var playersToInclude = benchBoostGw.HasValue && benchBoostGw.Value == gw + 1
                 ? players // Include all 15 players for Bench Boost GW
                 : GetOrCreateOptimalTeam(optimalTeamsByGw, players, gw); // Use cached or create optimal team
-            
+
             // Single pass through players to calculate total and find captain
             var gwTotal = 0.0;
             var maxGw = double.MinValue;
             var captain = "";
-            
+
             foreach (var player in playersToInclude)
             {
                 var points = player.Predictions[gw];
@@ -208,7 +209,7 @@ public static class PlayerMapper
                     captain = player.Name;
                 }
             }
-            
+
             captainsByWeek.Add(captain);
             optimalTeamsByWeek.Add(playersToInclude);
             totalPoints += gwTotal;
@@ -218,22 +219,21 @@ public static class PlayerMapper
         return (totalPoints + captainPoints, captainsByWeek, optimalTeamsByWeek);
     }
 
-    public static (double PredictedPoints, List<string> CaptainsByWeek, List<List<Player>> OptimalTeamsByWeek, int BestBenchBoostWeek, double BenchBoostDifference) CalculatePredictedPointsWithBestBenchBoost(List<Player> players, int startGw, int endGw)
+    public static (double PredictedPoints, List<string> CaptainsByWeek, List<List<Player>> OptimalTeamsByWeek, int
+        BestBenchBoostWeek, double BenchBoostDifference) CalculatePredictedPointsWithBestBenchBoost(
+            List<Player> players, int startGw, int endGw)
     {
-        var bestPoints = 0.0;
-        var bestCaptainsByWeek = new List<string>();
-        var bestOptimalTeamsByWeek = new List<List<Player>>();
         var bestBenchBoostWeek = 0; // 0 means no bench boost
         var bestBenchBoostDifference = 0.0;
 
         // Calculate base points without bench boost
-        var noBenchBoostCalculation = CalculatePredictedPoints(players, startGw, endGw, null);
-        bestPoints = noBenchBoostCalculation.PredictedPoints;
-        bestCaptainsByWeek = noBenchBoostCalculation.CaptainsByWeek;
-        bestOptimalTeamsByWeek = noBenchBoostCalculation.OptimalTeamsByWeek;
+        var noBenchBoostCalculation = CalculatePredictedPoints(players, startGw, endGw);
+        var bestPoints = noBenchBoostCalculation.PredictedPoints;
+        var bestCaptainsByWeek = noBenchBoostCalculation.CaptainsByWeek;
+        var bestOptimalTeamsByWeek = noBenchBoostCalculation.OptimalTeamsByWeek;
 
         // Try bench boost in each week and find the one with highest difference
-        for (int bbWeek = startGw; bbWeek <= endGw; bbWeek++)
+        for (var bbWeek = startGw; bbWeek <= endGw; bbWeek++)
         {
             var calculation = CalculatePredictedPoints(players, startGw, endGw, bbWeek);
             var benchBoostDifference = calculation.PredictedPoints - noBenchBoostCalculation.PredictedPoints;
@@ -254,28 +254,33 @@ public static class PlayerMapper
     public static string FormatTeamByPosition(List<Player> team, int gameweek = 0)
     {
         // Group players by position and sort by predicted points within each position
-        var gks = team.Where(p => p.Position == PositionEnum.GK).OrderByDescending(p => p.Predictions[gameweek]).ToList();
-        var defs = team.Where(p => p.Position == PositionEnum.DEF).OrderByDescending(p => p.Predictions[gameweek]).ToList();
-        var mids = team.Where(p => p.Position == PositionEnum.MID).OrderByDescending(p => p.Predictions[gameweek]).ToList();
-        var fwds = team.Where(p => p.Position == PositionEnum.FWD).OrderByDescending(p => p.Predictions[gameweek]).ToList();
+        var gks = team.Where(p => p.Position == PositionEnum.GK).OrderByDescending(p => p.Predictions[gameweek])
+            .ToList();
+        var defs = team.Where(p => p.Position == PositionEnum.DEF).OrderByDescending(p => p.Predictions[gameweek])
+            .ToList();
+        var mids = team.Where(p => p.Position == PositionEnum.MID).OrderByDescending(p => p.Predictions[gameweek])
+            .ToList();
+        var fwds = team.Where(p => p.Position == PositionEnum.FWD).OrderByDescending(p => p.Predictions[gameweek])
+            .ToList();
 
         var result = new List<string>();
-        
+
         if (gks.Any()) result.Add($"GK: {string.Join(", ", gks.Select(p => p.Name))}");
         if (defs.Any()) result.Add($"DEF: {string.Join(", ", defs.Select(p => p.Name))}");
         if (mids.Any()) result.Add($"MID: {string.Join(", ", mids.Select(p => p.Name))}");
         if (fwds.Any()) result.Add($"FWD: {string.Join(", ", fwds.Select(p => p.Name))}");
-        
+
         return string.Join(" | ", result);
     }
 
-    private static List<Player> GetOrCreateOptimalTeam(Dictionary<int, List<Player>> cache, List<Player> players, int gw)
+    private static List<Player> GetOrCreateOptimalTeam(Dictionary<int, List<Player>> cache, List<Player> players,
+        int gw)
     {
         if (cache.TryGetValue(gw, out var cachedTeam))
         {
             return cachedTeam;
         }
-        
+
         var optimalTeam = SelectOptimalTeam(players, gw);
         cache[gw] = optimalTeam;
         return optimalTeam;

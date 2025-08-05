@@ -12,7 +12,7 @@ const int complexity = 30;
 const int maxPlayersByTeam = 3;
 
 // Data source configuration
-const bool useLocalJson = true; // Set to false for production mode (download from URL)
+bool useLocalJson = true; // Set to false for production mode (download from URL)
 const string localJsonPath = "test.json";
 const string remoteJsonUrl = "https://www.fantasyfootballhub.co.uk/player-data/player-data.json";
 
@@ -26,7 +26,7 @@ int numberOfPlayers = 0;
 Stopwatch stopWatch = new Stopwatch();
 stopWatch.Start();
 
-List<Root> rawPlayers;
+List<Root>? rawPlayers;
 if (useLocalJson)
 {
     Console.WriteLine($"Development mode: Loading data from local file '{localJsonPath}'");
@@ -104,7 +104,8 @@ concatedPlayers.RemoveAll(r => IncludedPlayers.BanList.Contains(r.Name));
 var groupedPlayers = concatedPlayers.GroupBy(p => new { p.Position, p.CurrentPrice, p.Club })
     .Select(x => x.OrderByDescending(b => b.TotalPredicted).First());
 //Grouping players
-var playersByPosition = groupedPlayers.GroupBy(o => o.Position);
+var enumerable = groupedPlayers.ToList();
+var playersByPosition = enumerable.GroupBy(o => o.Position);
 //Creating combinations of players per position
 foreach (var position in playersByPosition)
 {
@@ -120,7 +121,7 @@ foreach (var position in playersByPosition)
     };
 
     combinationsByPosition.AddRange(Combinations<Player>.GetCombinations(
-        groupedPlayers.Where(p => p.Position.ToString().Equals(position.Key.ToString()))
+        enumerable.Where(p => p.Position.ToString().Equals(position.Key.ToString()))
             .ToList(), numberOfPlayers));
 
     combinations.AddRange(combinationsByPosition.Select(combination => new Combination(combination, startGw, endGw)));
@@ -139,32 +140,28 @@ var lockedPlayersByPosition = IncludedPlayers.LockedPlayers
     .ToDictionary(g => g.Key, g => g.Select(p => p.Key).ToList());
 
 // Add combinations that contain ALL locked players for each position
-if (lockedPlayersByPosition.ContainsKey(nameof(PositionEnum.GK)))
+if (lockedPlayersByPosition.TryGetValue(nameof(PositionEnum.GK), out var value1))
 {
     validGks.AddRange(combinations.Where(c => c.Position == PositionEnum.GK).Where(gk =>
-        lockedPlayersByPosition[nameof(PositionEnum.GK)]
-            .All(lockedPlayer => gk.Players.Select(p => p.Name).Contains(lockedPlayer))));
+        value1.All(lockedPlayer => gk.Players.Select(p => p.Name).Contains(lockedPlayer))));
 }
 
-if (lockedPlayersByPosition.ContainsKey(nameof(PositionEnum.DEF)))
+if (lockedPlayersByPosition.TryGetValue(nameof(PositionEnum.DEF), out var value2))
 {
     validDefs.AddRange(combinations.Where(c => c.Position == PositionEnum.DEF).Where(def =>
-        lockedPlayersByPosition[nameof(PositionEnum.DEF)]
-            .All(lockedPlayer => def.Players.Select(p => p.Name).Contains(lockedPlayer))));
+        value2.All(lockedPlayer => def.Players.Select(p => p.Name).Contains(lockedPlayer))));
 }
 
-if (lockedPlayersByPosition.ContainsKey(nameof(PositionEnum.MID)))
+if (lockedPlayersByPosition.TryGetValue(nameof(PositionEnum.MID), out var value3))
 {
     validMids.AddRange(combinations.Where(c => c.Position == PositionEnum.MID).Where(mid =>
-        lockedPlayersByPosition[nameof(PositionEnum.MID)]
-            .All(lockedPlayer => mid.Players.Select(p => p.Name).Contains(lockedPlayer))));
+        value3.All(lockedPlayer => mid.Players.Select(p => p.Name).Contains(lockedPlayer))));
 }
 
-if (lockedPlayersByPosition.ContainsKey(nameof(PositionEnum.FWD)))
+if (lockedPlayersByPosition.TryGetValue(nameof(PositionEnum.FWD), out var value4))
 {
     validFwds.AddRange(combinations.Where(c => c.Position == PositionEnum.FWD).Where(fwd =>
-        lockedPlayersByPosition[nameof(PositionEnum.FWD)]
-            .All(lockedPlayer => fwd.Players.Select(p => p.Name).Contains(lockedPlayer))));
+        value4.All(lockedPlayer => fwd.Players.Select(p => p.Name).Contains(lockedPlayer))));
 }
 
 // If no locked players for a position, use all combinations
@@ -179,7 +176,7 @@ if (validFwds.Count == 0)
 
 
 //Selecting top combinations by price and value with complexity parameter
-var gks = validGks.OrderByDescending(c => c.Value).Take(complexity/5).Union(
+var gks = validGks.OrderByDescending(c => c.Value).Take(complexity / 5).Union(
         validGks.OrderByDescending(c => c.PredictedPoints / c.NumberOfPlayers)
             .Take(complexity))
     .Distinct().ToList();
@@ -241,7 +238,7 @@ foreach (var gk in gks)
                 var totalPrice = gkDefMidPrice + fwd.Price;
 
                 // Early price validation
-                if (totalPrice > maxTeamPrice || totalPrice < minTeamPrice)
+                if (totalPrice is > maxTeamPrice or < minTeamPrice)
                     continue;
 
                 // Create combination only if price is valid and validate team composition
@@ -313,16 +310,16 @@ var teamsWithPoints = validTeamCombinations
     {
         // Pre-allocate list with estimated capacity and build player list efficiently
         var totalPlayers = team.Sum(c => c.Players.Count);
-        var players = new List<Player>(totalPlayers);
+        var teamPlayers = new List<Player>(totalPlayers);
 
         foreach (var combination in team)
         {
-            players.AddRange(combination.Players);
+            teamPlayers.AddRange(combination.Players);
         }
 
         // Calculate predicted points with best bench boost week
         var calculation = PlayerMapper.CalculatePredictedPointsWithBestBenchBoost(
-            players,
+            teamPlayers,
             startGw,
             endGw);
 
@@ -342,11 +339,11 @@ var teamsWithPoints = validTeamCombinations
         return new
         {
             Team = team,
-            PredictedPoints = calculation.PredictedPoints,
-            CaptainsByWeek = calculation.CaptainsByWeek,
-            OptimalTeamsByWeek = calculation.OptimalTeamsByWeek,
-            BestBenchBoostWeek = calculation.BestBenchBoostWeek,
-            BenchBoostDifference = calculation.BenchBoostDifference
+            calculation.PredictedPoints,
+            calculation.CaptainsByWeek,
+            calculation.OptimalTeamsByWeek,
+            calculation.BestBenchBoostWeek,
+            calculation.BenchBoostDifference
         };
     })
     .OrderByDescending(t => t.PredictedPoints)
@@ -358,7 +355,8 @@ stopWatch.Stop();
 ts = stopWatch.Elapsed;
 // Format and display the TimeSpan value.
 elapsedTime = $"{ts.Hours:00}:{ts.Minutes:00}:{ts.Seconds:00}";
-Console.WriteLine($"Calculating predicted points for {totalTeams} teams completed in:" + elapsedTime);// Progress tracking variables
+Console.WriteLine($"Calculating predicted points for {totalTeams} teams completed in:" +
+                  elapsedTime); // Progress tracking variables
 
 //Printing
 foreach (var teamData in teamsWithPoints)
