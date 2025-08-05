@@ -172,12 +172,12 @@ public static class PlayerMapper
         return bestTeam;
     }
 
-    private static (double PredictedPoints, List<string> CaptainsByWeek, List<List<Player>> OptimalTeamsByWeek)
-        CalculatePredictedPoints(List<Player> players, int startGw, int endGw, int? benchBoostGw = null)
+    public static ResultTeam CalculatePredictedPoints(List<Player> players, int startGw, int endGw)
     {
         int from = startGw - 1;
         int to = endGw - 1;
 
+        List<double> benchPoints = [];
         double totalPoints = 0;
         double captainPoints = 0;
         var captainsByWeek = new List<string>(to - from + 1); // Pre-allocate capacity
@@ -189,9 +189,8 @@ public static class PlayerMapper
         for (var gw = from; gw <= to; gw++)
         {
             // Determine how many players to include for this GW
-            var playersToInclude = benchBoostGw.HasValue && benchBoostGw.Value == gw + 1
-                ? players // Include all 15 players for Bench Boost GW
-                : GetOrCreateOptimalTeam(optimalTeamsByGw, players, gw); // Use cached or create optimal team
+            var playersToInclude =
+                GetOrCreateOptimalTeam(optimalTeamsByGw, players, gw); // Use cached or create optimal team
 
             // Single pass through players to calculate total and find captain
             var gwTotal = 0.0;
@@ -203,52 +202,26 @@ public static class PlayerMapper
                 var points = player.Predictions[gw];
                 gwTotal += points;
 
-                if (points > maxGw)
-                {
-                    maxGw = points;
-                    captain = player.Name;
-                }
+                if (!(points > maxGw)) continue;
+
+                maxGw = points;
+                captain = player.Name;
             }
 
+            benchPoints.Add(players.Except(playersToInclude).ToList().Sum(p => p.Predictions[gw]));
             captainsByWeek.Add(captain);
             optimalTeamsByWeek.Add(playersToInclude);
             totalPoints += gwTotal;
             captainPoints += maxGw;
         }
 
-        return (totalPoints + captainPoints, captainsByWeek, optimalTeamsByWeek);
-    }
-
-    public static (double PredictedPoints, List<string> CaptainsByWeek, List<List<Player>> OptimalTeamsByWeek, int
-        BestBenchBoostWeek, double BenchBoostDifference) CalculatePredictedPointsWithBestBenchBoost(
-            List<Player> players, int startGw, int endGw)
-    {
-        var bestBenchBoostWeek = 0; // 0 means no bench boost
-        var bestBenchBoostDifference = 0.0;
-
-        // Calculate base points without bench boost
-        var noBenchBoostCalculation = CalculatePredictedPoints(players, startGw, endGw);
-        var bestPoints = noBenchBoostCalculation.PredictedPoints;
-        var bestCaptainsByWeek = noBenchBoostCalculation.CaptainsByWeek;
-        var bestOptimalTeamsByWeek = noBenchBoostCalculation.OptimalTeamsByWeek;
-
-        // Try bench boost in each week and find the one with highest difference
-        for (var bbWeek = startGw; bbWeek <= endGw; bbWeek++)
+        return new ResultTeam
         {
-            var calculation = CalculatePredictedPoints(players, startGw, endGw, bbWeek);
-            var benchBoostDifference = calculation.PredictedPoints - noBenchBoostCalculation.PredictedPoints;
-
-            if (benchBoostDifference > bestBenchBoostDifference)
-            {
-                bestBenchBoostDifference = benchBoostDifference;
-                bestPoints = calculation.PredictedPoints;
-                bestCaptainsByWeek = calculation.CaptainsByWeek;
-                bestOptimalTeamsByWeek = calculation.OptimalTeamsByWeek;
-                bestBenchBoostWeek = bbWeek;
-            }
-        }
-
-        return (bestPoints, bestCaptainsByWeek, bestOptimalTeamsByWeek, bestBenchBoostWeek, bestBenchBoostDifference);
+            OptimalTeamsByWeek = optimalTeamsByWeek,
+            CaptainsByWeek = captainsByWeek,
+            PredictedPoints = totalPoints + captainPoints,
+            BenchPoints = benchPoints
+        };
     }
 
     public static string FormatTeamByPosition(List<Player> team, int gameweek = 0)

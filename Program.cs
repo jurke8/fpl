@@ -8,11 +8,11 @@ Console.WriteLine("Importing and mapping players..");
 const int startGw = 1;
 const int endGw = 7;
 const int maxTeamPrice = 100;
-const int complexity = 30;
+const int complexity = 50;
 const int maxPlayersByTeam = 3;
-
+const bool calculateBenchBoost = true;
 // Data source configuration
-bool useLocalJson = true; // Set to false for production mode (download from URL)
+bool useLocalJson = false; // Set to false for production mode (download from URL)
 const string localJsonPath = "test.json";
 const string remoteJsonUrl = "https://www.fantasyfootballhub.co.uk/player-data/player-data.json";
 
@@ -305,7 +305,6 @@ var progressUpdateInterval = TimeSpan.FromSeconds(2); // Update every 2 seconds
 
 // Process teams in parallel for better performance
 var teamsWithPoints = validTeamCombinations
-    .AsParallel()
     .Select(team =>
     {
         // Pre-allocate list with estimated capacity and build player list efficiently
@@ -318,7 +317,7 @@ var teamsWithPoints = validTeamCombinations
         }
 
         // Calculate predicted points with best bench boost week
-        var calculation = PlayerMapper.CalculatePredictedPointsWithBestBenchBoost(
+        var calculation = PlayerMapper.CalculatePredictedPoints(
             teamPlayers,
             startGw,
             endGw);
@@ -339,17 +338,21 @@ var teamsWithPoints = validTeamCombinations
         return new
         {
             Team = team,
-            calculation.PredictedPoints,
-            calculation.CaptainsByWeek,
-            calculation.OptimalTeamsByWeek,
-            calculation.BestBenchBoostWeek,
-            calculation.BenchBoostDifference
+            ResultTeam = calculation
         };
     })
-    .OrderByDescending(t => t.PredictedPoints)
+    .OrderByDescending(t => t.ResultTeam.PredictedPoints)
     .Take(5)
     .ToList();
 
+//For bench boost
+if(calculateBenchBoost)
+{
+        foreach (var team in teamsWithPoints)
+        {
+            team.ResultTeam.PredictedPoints += team.ResultTeam.BenchPoints.Max();
+        }
+}
 stopWatch.Stop();
 // Get the elapsed time as a TimeSpan value.
 ts = stopWatch.Elapsed;
@@ -376,26 +379,15 @@ foreach (var teamData in teamsWithPoints)
     // Use string.Join for more efficient concatenation
     Console.Write(string.Join(",", names));
     Console.WriteLine(" Points: " +
-                      Math.Round(teamData.PredictedPoints, 2) +
+                      Math.Round(teamData.ResultTeam.PredictedPoints, 2) +
                       "; Price:" + team.Sum(x => x.Price));
 
-    // Show bench boost week if used
-    if (teamData.BestBenchBoostWeek > 0)
-    {
-        Console.WriteLine(
-            $"Bench Boost used in GW{teamData.BestBenchBoostWeek} (+{Math.Round(teamData.BenchBoostDifference, 2)} points)");
-    }
-    else
-    {
-        Console.WriteLine("No Bench Boost used");
-    }
-
     // Print optimal teams by week with captain marked
-    for (int i = 0; i < teamData.OptimalTeamsByWeek.Count; i++)
+    for (int i = 0; i < teamData.ResultTeam.OptimalTeamsByWeek.Count; i++)
     {
         var gw = startGw + i;
-        var optimalTeam = teamData.OptimalTeamsByWeek[i];
-        var captain = teamData.CaptainsByWeek[i];
+        var optimalTeam = teamData.ResultTeam.OptimalTeamsByWeek[i];
+        var captain = teamData.ResultTeam.CaptainsByWeek[i];
 
         // Group players by position and sort by predicted points within each position
         var gkPlayers = optimalTeam.Where(p => p.Position == PositionEnum.GK).OrderByDescending(p => p.Predictions[i])
