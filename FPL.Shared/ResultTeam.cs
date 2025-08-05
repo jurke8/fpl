@@ -1,4 +1,4 @@
-namespace FPL;
+namespace FPL.Shared;
 
 public class ResultTeam
 {
@@ -6,4 +6,5 @@ public class ResultTeam
     public List<string> CaptainsByWeek { get; set; }
     public double PredictedPoints { get; set; }
     public List<double> BenchPoints { get; set; }
+    public int BbGw { get; set; }
 }

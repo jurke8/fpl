@@ -1,16 +1,17 @@
 ﻿using System.Diagnostics;
 using System.Text.Json;
 using FPL;
+using FPL.Console;
 
 //Configuration
-const double minTeamPrice = 98;
+const double minTeamPrice = 99;
 Console.WriteLine("Importing and mapping players..");
 const int startGw = 1;
-const int endGw = 7;
+const int endGw = 5;
 const int maxTeamPrice = 100;
-const int complexity = 30;
-const int maxPlayersByTeam = 3;
-const bool calculateBenchBoost = false;
+const int complexity = 100;
+const int maxPlayersByTeam = 2;
+const bool calculateBenchBoost = true;
 // Data source configuration
 bool useLocalJson = true; // Set to false for production mode (download from URL)
 const string localJsonPath = "player-data.json";
@@ -86,9 +87,10 @@ players.AddRange(rawPlayers.Select(rawPlayer => PlayerMapper.MapRawDataToPlayer(
 players.RemoveAll(p => p.CurrentPrice is null || p.Value == 0);
 
 //Selecting top points and value (point/price) players
-var topPointsPlayer = players.OrderByDescending(p => p.TotalPredicted).Take(200);
-var topValuePlayers = players.OrderByDescending(o => o.Value).Take(200);
+var topPointsPlayer = players.OrderByDescending(p => p.TotalPredicted).Take(50);
+var topValuePlayers = players.OrderByDescending(o => o.Value).Take(50);
 var concatedPlayers = topPointsPlayer.Concat(topValuePlayers).Distinct().OrderByDescending(p => p.Value).ToList();
+
 
 foreach (var player in IncludedPlayers.LockedPlayers.Keys.Union(IncludedPlayers.IncludeList).Distinct())
 {
@@ -196,6 +198,7 @@ var fwds = validFwds.OrderByDescending(c => c.Value).Take(complexity)
         .Take(complexity))
     .Distinct().ToList();
 Console.WriteLine("Creating valid teams..");
+
 
 var validTeamCombinations = new List<List<Combination>>();
 stopWatch.Stop();
@@ -342,17 +345,21 @@ var teamsWithPoints = validTeamCombinations
         };
     })
     .OrderByDescending(t => t.ResultTeam.PredictedPoints)
-    .Take(5)
+    .Take(100)
     .ToList();
 
 //For bench boost
-if(calculateBenchBoost)
+if (calculateBenchBoost)
 {
-        foreach (var team in teamsWithPoints)
-        {
-            team.ResultTeam.PredictedPoints += team.ResultTeam.BenchPoints.Max();
-        }
+    foreach (var team in teamsWithPoints)
+    {
+        team.ResultTeam.PredictedPoints += team.ResultTeam.BenchPoints.Max();
+        team.ResultTeam.BbGw = team.ResultTeam.BenchPoints.IndexOf(team.ResultTeam.BenchPoints.Max()) + 1;
+    }
 }
+
+var finalTeamsWithPoints = teamsWithPoints.OrderByDescending(t => t.ResultTeam.PredictedPoints).Take(5);
+
 stopWatch.Stop();
 // Get the elapsed time as a TimeSpan value.
 ts = stopWatch.Elapsed;
@@ -362,7 +369,7 @@ Console.WriteLine($"Calculating predicted points for {totalTeams} teams complete
                   elapsedTime); // Progress tracking variables
 
 //Printing
-foreach (var teamData in teamsWithPoints)
+foreach (var teamData in finalTeamsWithPoints)
 {
     var team = teamData.Team;
 
@@ -381,6 +388,11 @@ foreach (var teamData in teamsWithPoints)
     Console.WriteLine(" Points: " +
                       Math.Round(teamData.ResultTeam.PredictedPoints, 2) +
                       "; Price:" + team.Sum(x => x.Price));
+    if (calculateBenchBoost)
+    {
+        Console.WriteLine(
+            $"BB GW{teamData.ResultTeam.BbGw} for {Math.Round(teamData.ResultTeam.BenchPoints.Max(), 2)} additional points");
+    }
 
     // Print optimal teams by week with captain marked
     for (int i = 0; i < teamData.ResultTeam.OptimalTeamsByWeek.Count; i++)
