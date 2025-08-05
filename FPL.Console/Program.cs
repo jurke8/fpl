@@ -10,10 +10,10 @@ const int endGw = 7;
 const int maxTeamPrice = 100;
 const int complexity = 30;
 const int maxPlayersByTeam = 3;
-const bool calculateBenchBoost = true;
+const bool calculateBenchBoost = false;
 // Data source configuration
-bool useLocalJson = false; // Set to false for production mode (download from URL)
-const string localJsonPath = "test.json";
+bool useLocalJson = true; // Set to false for production mode (download from URL)
+const string localJsonPath = "player-data.json";
 const string remoteJsonUrl = "https://www.fantasyfootballhub.co.uk/player-data/player-data.json";
 
 //Variables

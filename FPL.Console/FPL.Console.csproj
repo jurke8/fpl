@@ -8,13 +8,14 @@
     </PropertyGroup>
 
     <ItemGroup>
-      <None Update="test.json">
-        <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-      </None>
+      <ProjectReference Include="..\FPL.Shared\FPL.Shared.csproj" />
     </ItemGroup>
 
     <ItemGroup>
-      <ProjectReference Include="..\FPL.Shared\FPL.Shared.csproj" />
+      <Content Include="..\player-data.json">
+        <Link>player-data.json</Link>
+        <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      </Content>
     </ItemGroup>
 
 </Project>

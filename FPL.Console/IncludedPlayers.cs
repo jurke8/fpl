@@ -4,7 +4,7 @@ public static class IncludedPlayers
 {
     public static readonly Dictionary<string, string> LockedPlayers = new()
     {
-        { "Wirtz", "MID" },
+        // { "Wirtz", "MID" },
         // { "Cucurella", "DEF" },
         // { "Rogers", "MID" },
         // { "Watkins", "FWD" },
@@ -27,27 +27,27 @@ public static class IncludedPlayers
     ];
     public static readonly List<string> BanList =
     [
-        "Martinez",
-        "M.Salah",
-        "Digne",
-        "Pope",
-        "Raya",
-        "Raúl",
-        "Gvardiol",
-        "Colwill",
-        "José Sá",
-        "Mayenda",
-        "Flemming",
-        "Maguire",
-        "Botman",
-        "Schär",
-        "Rodrigo",
-        "Rice",
-        "Petrović",
-        "Richards",
-        "Tete",
-        "Ederson M.",
-        "Saka",
-        "A.Becker"
+        // "Martinez",
+        // "M.Salah",
+        // "Digne",
+        // "Pope",
+        // "Raya",
+        // "Raúl",
+        // "Gvardiol",
+        // "Colwill",
+        // "José Sá",
+        // "Mayenda",
+        // "Flemming",
+        // "Maguire",
+        // "Botman",
+        // "Schär",
+        // "Rodrigo",
+        // "Rice",
+        // "Petrović",
+        // "Richards",
+        // "Tete",
+        // "Ederson M.",
+        // "Saka",
+        // "A.Becker"
     ];
 }

@@ -1,6 +1,0 @@
-@FPL.API_HostAddress = http://localhost:5048
-
-GET {{FPL.API_HostAddress}}/weatherforecast/
-Accept: application/json
-
-###
