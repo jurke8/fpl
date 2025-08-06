@@ -7,13 +7,13 @@ using FPL.Console;
 const double minTeamPrice = 99;
 Console.WriteLine("Importing and mapping players..");
 const int startGw = 1;
-const int endGw = 5;
+const int endGw = 3;
 const int maxTeamPrice = 100;
-const int complexity = 100;
-const int maxPlayersByTeam = 2;
+const int complexity = 80;
+const int maxPlayersByTeam = 3;
 const bool calculateBenchBoost = true;
 // Data source configuration
-bool useLocalJson = true; // Set to false for production mode (download from URL)
+bool useLocalJson = false; // Set to false for production mode (download from URL)
 const string localJsonPath = "player-data.json";
 const string remoteJsonUrl = "https://www.fantasyfootballhub.co.uk/player-data/player-data.json";
 
@@ -87,8 +87,8 @@ players.AddRange(rawPlayers.Select(rawPlayer => PlayerMapper.MapRawDataToPlayer(
 players.RemoveAll(p => p.CurrentPrice is null || p.Value == 0);
 
 //Selecting top points and value (point/price) players
-var topPointsPlayer = players.OrderByDescending(p => p.TotalPredicted).Take(50);
-var topValuePlayers = players.OrderByDescending(o => o.Value).Take(50);
+var topPointsPlayer = players.OrderByDescending(p => p.TotalPredicted).Take(200);
+var topValuePlayers = players.OrderByDescending(o => o.Value).Take(200);
 var concatedPlayers = topPointsPlayer.Concat(topValuePlayers).Distinct().OrderByDescending(p => p.Value).ToList();
 
 

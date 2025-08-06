@@ -132,10 +132,11 @@ app.MapGet("/api/top-players",
                 {
                     return Results.BadRequest("SortBy must be one of: points, value");
                 }
+
                 var players = new List<Player>();
 
                 players.AddRange(rawPlayers.Select(rawPlayer =>
-                    PlayerMapper.MapRawDataToPlayer(rawPlayer, startGameweek, endGameweek - startGameweek - 1)));
+                    PlayerMapper.MapRawDataToPlayer(rawPlayer, startGameweek, endGameweek - startGameweek + 1)));
                 players.RemoveAll(p => p.CurrentPrice is null || p.Value == 0);
 
                 // Calculate total prediction points for each player in the specified range
@@ -169,6 +170,113 @@ app.MapGet("/api/top-players",
         operation.Summary = "Gets the top 20 players by prediction points or value for a specified gameweek range";
         operation.Description =
             "Returns a list of the top 20 players sorted by total prediction points or value across the specified gameweek range. Optionally filter by position (GK, DEF, MID, FWD) and sort by points or value.";
+        return operation;
+    });
+
+// New endpoint for calculating team points across gameweeks
+app.MapPost("/api/team-points",
+        (TeamPointsRequest request) =>
+        {
+            try
+            {
+                // Validate input parameters
+                if (request.PlayerNames.Count == 0)
+                {
+                    return Results.BadRequest("Player names list cannot be null or empty.");
+                }
+
+                if (request.StartGameweek < 1 || request.EndGameweek < 1)
+                {
+                    return Results.BadRequest("Gameweek numbers must be positive integers.");
+                }
+
+                if (request.StartGameweek > request.EndGameweek)
+                {
+                    return Results.BadRequest("Start gameweek must be less than or equal to end gameweek.");
+                }
+
+                if (request.EndGameweek > 38)
+                {
+                    return Results.BadRequest("End gameweek cannot exceed 38 (full Premier League season).");
+                }
+
+                // Find players by names (case-insensitive)
+                var teamPlayers = new List<Player>();
+                var notFoundPlayers = new List<string>();
+
+                foreach (var playerName in request.PlayerNames)
+                {
+                    var player = rawPlayers.FirstOrDefault(p =>
+                        string.Equals(p.webName, playerName, StringComparison.OrdinalIgnoreCase));
+
+                    if (player != null)
+                    {
+                        var mappedPlayer = PlayerMapper.MapRawDataToPlayer(player, request.StartGameweek,
+                            request.EndGameweek - request.StartGameweek + 1);
+                        teamPlayers.Add(mappedPlayer);
+                    }
+                    else
+                    {
+                        notFoundPlayers.Add(playerName);
+                    }
+                }
+
+                if (!teamPlayers.Any())
+                {
+                    return Results.BadRequest("No valid players found in the provided list.");
+                }
+
+
+                var team = PlayerMapper.CalculatePredictedPoints(teamPlayers, request.StartGameweek,
+                    request.EndGameweek);
+                // Calculate points for each gameweek
+                var gameWeekPoints = new List<double>();
+                for (var i = request.StartGameweek - 1; i < request.EndGameweek; i++)
+                {
+                    gameWeekPoints.Add(team.OptimalTeamsByWeek[i].Select(s => s.Predictions[i]).Sum());
+                }
+
+                var teamByWeek = new List<List<string>>();
+                foreach (var listPlayer in team.OptimalTeamsByWeek)
+                {
+                    var list = new List<string>();
+                    foreach (var player in listPlayer)
+                    {
+                        list.Add(player.Name);
+                    }
+                    teamByWeek.Add(list);
+                }
+
+                team.PredictedPoints += team.BenchPoints.Max();
+                team.BbGw = team.BenchPoints.IndexOf(team.BenchPoints.Max()) + 1;
+
+                var response = new TeamPointsResponse
+                {
+                    PlayerNames = request.PlayerNames,
+                    StartGameweek = request.StartGameweek,
+                    EndGameweek = request.EndGameweek,
+                    GameweekPoints = gameWeekPoints,
+                    TotalPoints = team.PredictedPoints,
+                    NotFoundPlayers = notFoundPlayers,
+                    FoundPlayersCount = teamPlayers.Count,
+                    TeamByWeek = teamByWeek,
+                    CaptainsByWeek = team.CaptainsByWeek,
+                    BbGw = team.BbGw
+                };
+
+                return Results.Ok(response);
+            }
+            catch (Exception ex)
+            {
+                return Results.Problem($"An error occurred while processing the request: {ex.Message}");
+            }
+        })
+    .WithName("GetTeamPoints")
+    .WithOpenApi(operation =>
+    {
+        operation.Summary = "Calculates total points for a team across specified gameweeks";
+        operation.Description =
+            "Takes a list of player names and calculates the total predicted points for that team across the specified gameweek range. Returns points for each gameweek and summary statistics.";
         return operation;
     });
 
