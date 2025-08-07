@@ -172,7 +172,7 @@ public class Data
         public Live live { get; set; }
         public double fpl_ownership { get; set; }
         public int? elite_ownership { get; set; }
-        public int? elite_ownership_change { get; set; }
+        public double? elite_ownership_change { get; set; }
         public string player_pool_status { get; set; }
     }
 

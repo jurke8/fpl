@@ -11,7 +11,7 @@ const int endGw = 3;
 const int maxTeamPrice = 100;
 const int complexity = 80;
 const int maxPlayersByTeam = 3;
-const bool calculateBenchBoost = true;
+const bool calculateBenchBoost = false;
 // Data source configuration
 bool useLocalJson = false; // Set to false for production mode (download from URL)
 const string localJsonPath = "player-data.json";
@@ -63,7 +63,6 @@ else
             Console.WriteLine("Error: Failed to deserialize downloaded JSON data.");
             return;
         }
-
         Console.WriteLine($"Successfully downloaded and loaded {rawPlayers.Count} players.");
     }
     catch (HttpRequestException ex)
@@ -306,7 +305,6 @@ var progressLock = new object();
 var lastProgressUpdate = DateTime.Now;
 var progressUpdateInterval = TimeSpan.FromSeconds(2); // Update every 2 seconds
 
-// Process teams in parallel for better performance
 var teamsWithPoints = validTeamCombinations
     .Select(team =>
     {

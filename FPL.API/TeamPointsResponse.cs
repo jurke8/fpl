@@ -33,12 +33,12 @@ public class TeamPointsResponse
     /// <summary>
     /// List of player names that were not found in the database
     /// </summary>
-    public List<string> NotFoundPlayers { get; set; } = new();
-    
+    public List<string>? NotFoundPlayers { get; set; }
+
     /// <summary>
-    /// Number of players successfully found and included in calculations
+    /// Total team value (sum of all player prices)
     /// </summary>
-    public int FoundPlayersCount { get; set; }
+    public double? TeamValue { get; set; }
 
     public List<List<string>> TeamByWeek { get; set; } = new();
     public List<string> CaptainsByWeek { get; set; } = new();

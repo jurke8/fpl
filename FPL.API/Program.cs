@@ -20,7 +20,7 @@ builder.Services.AddSwaggerGen(c =>
 });
 
 // Data source configuration
-bool useLocalJson = true; // Set to false for production mode (download from URL)
+bool useLocalJson = false; // Set to false for production mode (download from URL)
 const string localJsonPath = "player-data.json";
 const string remoteJsonUrl = "https://www.fantasyfootballhub.co.uk/player-data/player-data.json";
 
@@ -233,7 +233,9 @@ app.MapPost("/api/team-points",
                 var gameWeekPoints = new List<double>();
                 for (var i = request.StartGameweek - 1; i < request.EndGameweek; i++)
                 {
-                    gameWeekPoints.Add(team.OptimalTeamsByWeek[i].Select(s => s.Predictions[i]).Sum());
+                    gameWeekPoints.Add(Math.Round(
+                        team.OptimalTeamsByWeek[i].Select(s => s.Predictions[i]).Sum() +
+                        team.OptimalTeamsByWeek[i].Select(p => p.Predictions[i]).Max(), 2));
                 }
 
                 var teamByWeek = new List<List<string>>();
@@ -244,11 +246,14 @@ app.MapPost("/api/team-points",
                     {
                         list.Add(player.Name);
                     }
+
                     teamByWeek.Add(list);
                 }
 
-                team.PredictedPoints += team.BenchPoints.Max();
                 team.BbGw = team.BenchPoints.IndexOf(team.BenchPoints.Max()) + 1;
+
+                // Calculate team value
+                var teamValue = PlayerMapper.CalculateTeamPrice(teamPlayers);
 
                 var response = new TeamPointsResponse
                 {
@@ -256,9 +261,9 @@ app.MapPost("/api/team-points",
                     StartGameweek = request.StartGameweek,
                     EndGameweek = request.EndGameweek,
                     GameweekPoints = gameWeekPoints,
-                    TotalPoints = team.PredictedPoints,
-                    NotFoundPlayers = notFoundPlayers,
-                    FoundPlayersCount = teamPlayers.Count,
+                    TotalPoints = Math.Round(team.PredictedPoints, 2),
+                    NotFoundPlayers = notFoundPlayers.Count > 0 ? notFoundPlayers : null,
+                    TeamValue = teamValue,
                     TeamByWeek = teamByWeek,
                     CaptainsByWeek = team.CaptainsByWeek,
                     BbGw = team.BbGw
