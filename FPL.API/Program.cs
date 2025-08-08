@@ -174,6 +174,106 @@ app.MapGet("/api/top-players",
         return operation;
     });
 
+// Endpoint for comparing two players across gameweeks
+app.MapPost("/api/compare-players", (ComparePlayersRequest request) =>
+    {
+        try
+        {
+            // Validate input
+            if (string.IsNullOrWhiteSpace(request.Player1Name) || string.IsNullOrWhiteSpace(request.Player2Name))
+            {
+                return Results.BadRequest("Both player names must be provided.");
+            }
+
+            if (request.StartGameweek < 1 || request.EndGameweek < 1)
+            {
+                return Results.BadRequest("Gameweek numbers must be positive integers.");
+            }
+
+            if (request.StartGameweek > request.EndGameweek)
+            {
+                return Results.BadRequest("Start gameweek must be less than or equal to end gameweek.");
+            }
+
+            if (request.EndGameweek > 38)
+            {
+                return Results.BadRequest("End gameweek cannot exceed 38 (full Premier League season).");
+            }
+
+            var p1Raw = rawPlayers.FirstOrDefault(p => string.Equals(p.webName, request.Player1Name, StringComparison.OrdinalIgnoreCase));
+            var p2Raw = rawPlayers.FirstOrDefault(p => string.Equals(p.webName, request.Player2Name, StringComparison.OrdinalIgnoreCase));
+
+            var notFound = new List<string>();
+            if (p1Raw is null) notFound.Add(request.Player1Name);
+            if (p2Raw is null) notFound.Add(request.Player2Name);
+            if (notFound.Count > 0)
+            {
+                return Results.NotFound($"Player(s) not found: {string.Join(", ", notFound)}");
+            }
+
+            var numberOfGws = request.EndGameweek - request.StartGameweek + 1;
+            var p1 = PlayerMapper.MapRawDataToPlayer(p1Raw!, request.StartGameweek, numberOfGws);
+            var p2 = PlayerMapper.MapRawDataToPlayer(p2Raw!, request.StartGameweek, numberOfGws);
+
+            // Per-GW points are the player's prediction for that gw index
+            var gwPoints1 = new List<double>(capacity: numberOfGws);
+            var gwPoints2 = new List<double>(capacity: numberOfGws);
+            var deltas = new List<double>(capacity: numberOfGws);
+
+            for (int gw = request.StartGameweek - 1; gw < request.EndGameweek; gw++)
+            {
+                var p1Pts = Math.Round(p1.Predictions[gw], 2);
+                var p2Pts = Math.Round(p2.Predictions[gw], 2);
+                gwPoints1.Add(p1Pts);
+                gwPoints2.Add(p2Pts);
+                deltas.Add(Math.Round(p1Pts - p2Pts, 2));
+            }
+
+            var player1 = new PlayerComparison
+            {
+                Name = p1.Name,
+                Position = p1.Position.ToString(),
+                Club = p1.Club.ToString(),
+                CurrentPrice = p1.CurrentPrice,
+                Value = Math.Round(p1.Value, 2),
+                GameweekPoints = gwPoints1,
+                TotalPoints = Math.Round(gwPoints1.Sum(), 2)
+            };
+
+            var player2 = new PlayerComparison
+            {
+                Name = p2.Name,
+                Position = p2.Position.ToString(),
+                Club = p2.Club.ToString(),
+                CurrentPrice = p2.CurrentPrice,
+                Value = Math.Round(p2.Value, 2),
+                GameweekPoints = gwPoints2,
+                TotalPoints = Math.Round(gwPoints2.Sum(), 2)
+            };
+
+            var response = new ComparePlayersResponse
+            {
+                Player1 = player1,
+                Player2 = player2,
+                GameweekDelta = deltas,
+                TotalDelta = Math.Round(deltas.Sum(), 2)
+            };
+
+            return Results.Ok(response);
+        }
+        catch (Exception ex)
+        {
+            return Results.Problem($"An error occurred while processing the request: {ex.Message}");
+        }
+    })
+    .WithName("ComparePlayers")
+    .WithOpenApi(op =>
+    {
+        op.Summary = "Compares two players across a gameweek range";
+        op.Description = "Returns per-gameweek predicted points, per-week delta, prices, values, totals, and total delta for the two specified players.";
+        return op;
+    });
+
 // New endpoint for calculating team points across gameweeks (supports comparing two teams)
 app.MapPost("/api/team-points",
         (TeamPointsRequest request) =>
@@ -341,6 +441,174 @@ app.MapPost("/api/team-points",
         operation.Summary = "Calculates total points for one or two teams across specified gameweeks (with comparison)";
         operation.Description =
             "Takes one or two lists of player names and calculates the total predicted points for the team(s) across the specified gameweek range. If two teams are provided, returns both results and a difference (primary - opponent).";
+        return operation;
+    });
+
+// Endpoint for suggesting best transfers over a lookahead horizon
+app.MapPost("/api/suggest-transfers", (SuggestTransfersRequest request) =>
+    {
+        try
+        {
+            // Basic validations
+            if (request.PlayerNames is null || request.PlayerNames.Count != 15)
+            {
+                return Results.BadRequest("Provide exactly 15 player names for the team.");
+            }
+            if (request.FreeTransfers < 0)
+            {
+                return Results.BadRequest("FreeTransfers must be >= 0.");
+            }
+            if (request.CurrentGameweek < 1 || request.CurrentGameweek > 38)
+            {
+                return Results.BadRequest("CurrentGameweek must be between 1 and 38.");
+            }
+            if (request.LookaheadGameweeks < 1)
+            {
+                return Results.BadRequest("LookaheadGameweeks must be >= 1.");
+            }
+
+            var startGw = request.CurrentGameweek;
+            var endGw = Math.Min(38, request.CurrentGameweek + request.LookaheadGameweeks - 1);
+            var numberOfGws = endGw - startGw + 1;
+
+            // Find original team players
+            var notFound = new List<string>();
+            var originalTeamPlayers = new List<Player>(capacity: 11);
+            foreach (var name in request.PlayerNames)
+            {
+                var raw = rawPlayers.FirstOrDefault(p => string.Equals(p.webName, name, StringComparison.OrdinalIgnoreCase));
+                if (raw is null)
+                {
+                    notFound.Add(name);
+                    continue;
+                }
+                var mapped = PlayerMapper.MapRawDataToPlayer(raw, startGw, numberOfGws);
+                if (mapped.CurrentPrice is null || mapped.Value == 0)
+                {
+                    // Treat unpriceable players as not found/invalid for prediction purposes
+                    notFound.Add(name);
+                    continue;
+                }
+                originalTeamPlayers.Add(mapped);
+            }
+
+            if (notFound.Count > 0)
+            {
+                return Results.NotFound($"Player(s) not found or invalid: {string.Join(", ", notFound)}");
+            }
+
+            if (originalTeamPlayers.Count != 15)
+            {
+                return Results.BadRequest("Exactly 15 valid players are required.");
+            }
+
+            // Helper: compute projected points across horizon
+            double ProjectedPoints(List<Player> team) => Math.Round(
+                PlayerMapper.CalculatePredictedPoints(team, startGw, endGw).PredictedPoints, 2);
+
+            // Club limit (FPL standard) and team budget constraint
+            const int MAX_PER_CLUB = 3;
+            const double MAX_TEAM_BUDGET = 100.0; // budget for 15-man squad
+            double GetTeamPrice(List<Player> team) => PlayerMapper.CalculateTeamPrice(team) ?? double.MaxValue;
+            var workingTeamPrice = GetTeamPrice(originalTeamPlayers);
+            bool ExceedsClubLimitAfterSwap(List<Player> current, Player outPlayer, Player inPlayer)
+            {
+                if (outPlayer.Club == inPlayer.Club)
+                    return false; // no change in count for that club
+                var counts = current.GroupBy(p => p.Club).ToDictionary(g => g.Key, g => g.Count());
+                counts[outPlayer.Club] = counts.GetValueOrDefault(outPlayer.Club, 0) - 1;
+                counts[inPlayer.Club] = counts.GetValueOrDefault(inPlayer.Club, 0) + 1;
+                return counts[inPlayer.Club] > MAX_PER_CLUB || counts.GetValueOrDefault(outPlayer.Club, 0) < 0;
+            }
+
+            // Build candidate pool once
+            var allMappedPlayers = rawPlayers
+                .Select(r => PlayerMapper.MapRawDataToPlayer(r, startGw, numberOfGws))
+                .Where(p => p.CurrentPrice is not null && p.Value > 0)
+                .ToList();
+
+            var nameInCurrent = new HashSet<string>(originalTeamPlayers.Select(p => p.Name), StringComparer.OrdinalIgnoreCase);
+
+            // Start with current team
+            var workingTeam = new List<Player>(originalTeamPlayers);
+            var suggestions = new List<TransferSuggestion>();
+            var currentPoints = ProjectedPoints(workingTeam);
+
+            for (int i = 0; i < request.FreeTransfers; i++)
+            {
+                TransferSuggestion? best = null;
+                List<Player>? bestTeam = null;
+
+                foreach (var outPlayer in workingTeam)
+                {
+                    // Only consider replacements of the same position to keep roster coherent
+                    var candidates = allMappedPlayers.Where(p => p.Position == outPlayer.Position && !nameInCurrent.Contains(p.Name));
+
+                    foreach (var candidate in candidates)
+                    {
+                        if (ExceedsClubLimitAfterSwap(workingTeam, outPlayer, candidate))
+                            continue;
+
+                        // Budget check for the swap
+                        var newTeamPrice = workingTeamPrice - (outPlayer.CurrentPrice ?? 0) + (candidate.CurrentPrice ?? 0);
+                        if (newTeamPrice > MAX_TEAM_BUDGET)
+                            continue;
+
+                        // Build new team
+                        var newTeam = new List<Player>(workingTeam);
+                        var idx = newTeam.FindIndex(p => p.Name.Equals(outPlayer.Name, StringComparison.OrdinalIgnoreCase));
+                        if (idx < 0) continue;
+                        newTeam[idx] = candidate;
+
+                        var newPoints = ProjectedPoints(newTeam);
+                        var delta = Math.Round(newPoints - currentPoints, 2);
+                        if (delta > 0 && (best is null || delta > best.DeltaPoints))
+                        {
+                            best = new TransferSuggestion { Out = outPlayer.Name, In = candidate.Name, DeltaPoints = delta };
+                            bestTeam = newTeam;
+                        }
+                    }
+                }
+
+                if (best is null || bestTeam is null)
+                {
+                    // No positive improvement available; stop early
+                    break;
+                }
+
+                // Apply best transfer and iterate
+                suggestions.Add(best);
+                nameInCurrent.Remove(best.Out);
+                nameInCurrent.Add(best.In);
+                // update team price for next iteration
+                var outP = workingTeam.First(p => p.Name.Equals(best.Out, StringComparison.OrdinalIgnoreCase));
+                var inP = allMappedPlayers.First(p => p.Name.Equals(best.In, StringComparison.OrdinalIgnoreCase));
+                workingTeamPrice = workingTeamPrice - (outP.CurrentPrice ?? 0) + (inP.CurrentPrice ?? 0);
+                workingTeam = bestTeam;
+                currentPoints = ProjectedPoints(workingTeam);
+            }
+
+            var response = new SuggestTransfersResponse
+            {
+                OriginalTeam = originalTeamPlayers.Select(p => p.Name).ToList(),
+                Suggestions = suggestions,
+                FinalTeam = workingTeam.Select(p => p.Name).ToList(),
+                OriginalProjectedPoints = ProjectedPoints(originalTeamPlayers),
+                FinalProjectedPoints = ProjectedPoints(workingTeam)
+            };
+
+            return Results.Ok(response);
+        }
+        catch (Exception ex)
+        {
+            return Results.Problem($"An error occurred while processing the request: {ex.Message}");
+        }
+    })
+    .WithName("SuggestTransfers")
+    .WithOpenApi(operation =>
+    {
+        operation.Summary = "Suggests best transfers to maximize predicted points over a lookahead horizon";
+        operation.Description = "Given an XI, number of free transfers, current gameweek, and lookahead length, returns up to N transfers (same-position swaps, max 3 per club) that maximize predicted points across the horizon.";
         return operation;
     });
 
