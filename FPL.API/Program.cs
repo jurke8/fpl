@@ -24,9 +24,7 @@ bool useLocalJson = false; // Set to false for production mode (download from UR
 const string localJsonPath = "player-data.json";
 const string remoteJsonUrl = "https://www.fantasyfootballhub.co.uk/player-data/player-data.json";
 
-//Variables
-
-//Data import and mapping
+// Load data once on startup
 List<Root>? rawPlayers;
 if (useLocalJson)
 {
@@ -78,6 +76,9 @@ else
         return;
     }
 }
+
+// Register optimization service as singleton with loaded data
+builder.Services.AddSingleton<IOptimizationService>(sp => new OptimizationService(rawPlayers!));
 
 var app = builder.Build();
 
@@ -173,7 +174,7 @@ app.MapGet("/api/top-players",
         return operation;
     });
 
-// New endpoint for calculating team points across gameweeks
+// New endpoint for calculating team points across gameweeks (supports comparing two teams)
 app.MapPost("/api/team-points",
         (TeamPointsRequest request) =>
         {
@@ -200,76 +201,134 @@ app.MapPost("/api/team-points",
                     return Results.BadRequest("End gameweek cannot exceed 38 (full Premier League season).");
                 }
 
-                // Find players by names (case-insensitive)
-                var teamPlayers = new List<Player>();
-                var notFoundPlayers = new List<string>();
-
-                foreach (var playerName in request.PlayerNames)
+                // Helper to build a team response from a list of names
+                TeamPointsResponse BuildResponse(List<string> names)
                 {
-                    var player = rawPlayers.FirstOrDefault(p =>
-                        string.Equals(p.webName, playerName, StringComparison.OrdinalIgnoreCase));
+                    // Find players by names (case-insensitive)
+                    var teamPlayersLocal = new List<Player>();
+                    var notFoundPlayersLocal = new List<string>();
 
-                    if (player != null)
+                    foreach (var playerName in names)
                     {
-                        var mappedPlayer = PlayerMapper.MapRawDataToPlayer(player, request.StartGameweek,
-                            request.EndGameweek - request.StartGameweek + 1);
-                        teamPlayers.Add(mappedPlayer);
+                        var player = rawPlayers.FirstOrDefault(p =>
+                            string.Equals(p.webName, playerName, StringComparison.OrdinalIgnoreCase));
+
+                        if (player != null)
+                        {
+                            var mappedPlayer = PlayerMapper.MapRawDataToPlayer(player, request.StartGameweek,
+                                request.EndGameweek - request.StartGameweek + 1);
+                            teamPlayersLocal.Add(mappedPlayer);
+                        }
+                        else
+                        {
+                            notFoundPlayersLocal.Add(playerName);
+                        }
                     }
-                    else
+
+                    if (!teamPlayersLocal.Any())
                     {
-                        notFoundPlayers.Add(playerName);
+                        // This will be handled by the caller to return a BadRequest
+                        return new TeamPointsResponse
+                        {
+                            PlayerNames = names,
+                            StartGameweek = request.StartGameweek,
+                            EndGameweek = request.EndGameweek,
+                            NotFoundPlayers = notFoundPlayersLocal
+                        };
                     }
+
+                    var teamLocal = PlayerMapper.CalculatePredictedPoints(teamPlayersLocal, request.StartGameweek,
+                        request.EndGameweek);
+
+                    // Calculate points for each gameweek (maintaining existing indexing approach)
+                    var gameWeekPointsLocal = new List<double>();
+                    for (var i = request.StartGameweek - 1; i < request.EndGameweek; i++)
+                    {
+                        gameWeekPointsLocal.Add(Math.Round(
+                            teamLocal.OptimalTeamsByWeek[i].Select(s => s.Predictions[i]).Sum() +
+                            teamLocal.OptimalTeamsByWeek[i].Select(p => p.Predictions[i]).Max(), 2));
+                    }
+
+                    var teamByWeekLocal = new List<List<string>>();
+                    foreach (var listPlayer in teamLocal.OptimalTeamsByWeek)
+                    {
+                        var list = new List<string>();
+                        foreach (var player in listPlayer)
+                        {
+                            list.Add(player.Name);
+                        }
+
+                        teamByWeekLocal.Add(list);
+                    }
+
+                    teamLocal.BbGw = teamLocal.BenchPoints.IndexOf(teamLocal.BenchPoints.Max()) + 1;
+
+                    // Calculate team value
+                    var teamValueLocal = PlayerMapper.CalculateTeamPrice(teamPlayersLocal);
+
+                    return new TeamPointsResponse
+                    {
+                        PlayerNames = names,
+                        StartGameweek = request.StartGameweek,
+                        EndGameweek = request.EndGameweek,
+                        GameweekPoints = gameWeekPointsLocal,
+                        TotalPoints = Math.Round(teamLocal.PredictedPoints, 2),
+                        NotFoundPlayers = notFoundPlayersLocal.Count > 0 ? notFoundPlayersLocal : null,
+                        TeamValue = teamValueLocal,
+                        TeamByWeek = teamByWeekLocal,
+                        CaptainsByWeek = teamLocal.CaptainsByWeek,
+                        BbGw = teamLocal.BbGw
+                    };
                 }
 
-                if (!teamPlayers.Any())
+                // Build primary team response
+                var primary = BuildResponse(request.PlayerNames);
+                if (primary.GameweekPoints.Count == 0)
                 {
                     return Results.BadRequest("No valid players found in the provided list.");
                 }
 
-
-                var team = PlayerMapper.CalculatePredictedPoints(teamPlayers, request.StartGameweek,
-                    request.EndGameweek);
-                // Calculate points for each gameweek
-                var gameWeekPoints = new List<double>();
-                for (var i = request.StartGameweek - 1; i < request.EndGameweek; i++)
+                // If a second team is provided, build opponent and compute differences
+                if (request.PlayerNames2 is not null && request.PlayerNames2.Count > 0)
                 {
-                    gameWeekPoints.Add(Math.Round(
-                        team.OptimalTeamsByWeek[i].Select(s => s.Predictions[i]).Sum() +
-                        team.OptimalTeamsByWeek[i].Select(p => p.Predictions[i]).Max(), 2));
-                }
-
-                var teamByWeek = new List<List<string>>();
-                foreach (var listPlayer in team.OptimalTeamsByWeek)
-                {
-                    var list = new List<string>();
-                    foreach (var player in listPlayer)
+                    var opponent = BuildResponse(request.PlayerNames2);
+                    if (opponent.GameweekPoints.Count == 0)
                     {
-                        list.Add(player.Name);
+                        return Results.BadRequest("No valid players found in the second list (PlayerNames2).");
                     }
 
-                    teamByWeek.Add(list);
+                    var count = Math.Min(primary.GameweekPoints.Count, opponent.GameweekPoints.Count);
+                    var deltas = new List<double>(capacity: count);
+                    for (int i = 0; i < count; i++)
+                    {
+                        deltas.Add(Math.Round(primary.GameweekPoints[i] - opponent.GameweekPoints[i], 2));
+                    }
+
+                    primary.Opponent = new TeamPointsResponse
+                    {
+                        PlayerNames = opponent.PlayerNames,
+                        StartGameweek = opponent.StartGameweek,
+                        EndGameweek = opponent.EndGameweek,
+                        GameweekPoints = opponent.GameweekPoints,
+                        TotalPoints = opponent.TotalPoints,
+                        NotFoundPlayers = opponent.NotFoundPlayers,
+                        TeamValue = opponent.TeamValue,
+                        TeamByWeek = opponent.TeamByWeek,
+                        CaptainsByWeek = opponent.CaptainsByWeek,
+                        BbGw = opponent.BbGw,
+                        Opponent = null,
+                        Difference = null
+                    };
+
+                    primary.Difference = new TeamPointsDifference
+                    {
+                        GameweekPointsDelta = deltas,
+                        TotalPointsDelta = Math.Round(primary.TotalPoints - opponent.TotalPoints, 2),
+                        TeamValueDelta = (primary.TeamValue ?? 0) - (opponent.TeamValue ?? 0)
+                    };
                 }
 
-                team.BbGw = team.BenchPoints.IndexOf(team.BenchPoints.Max()) + 1;
-
-                // Calculate team value
-                var teamValue = PlayerMapper.CalculateTeamPrice(teamPlayers);
-
-                var response = new TeamPointsResponse
-                {
-                    PlayerNames = request.PlayerNames,
-                    StartGameweek = request.StartGameweek,
-                    EndGameweek = request.EndGameweek,
-                    GameweekPoints = gameWeekPoints,
-                    TotalPoints = Math.Round(team.PredictedPoints, 2),
-                    NotFoundPlayers = notFoundPlayers.Count > 0 ? notFoundPlayers : null,
-                    TeamValue = teamValue,
-                    TeamByWeek = teamByWeek,
-                    CaptainsByWeek = team.CaptainsByWeek,
-                    BbGw = team.BbGw
-                };
-
-                return Results.Ok(response);
+                return Results.Ok(primary);
             }
             catch (Exception ex)
             {
@@ -279,10 +338,48 @@ app.MapPost("/api/team-points",
     .WithName("GetTeamPoints")
     .WithOpenApi(operation =>
     {
-        operation.Summary = "Calculates total points for a team across specified gameweeks";
+        operation.Summary = "Calculates total points for one or two teams across specified gameweeks (with comparison)";
         operation.Description =
-            "Takes a list of player names and calculates the total predicted points for that team across the specified gameweek range. Returns points for each gameweek and summary statistics.";
+            "Takes one or two lists of player names and calculates the total predicted points for the team(s) across the specified gameweek range. If two teams are provided, returns both results and a difference (primary - opponent).";
         return operation;
     });
+
+// Endpoint to start optimization job
+app.MapPost("/api/optimize/start", async (OptimizeTeamsRequest request, IOptimizationService service, HttpContext ctx) =>
+{
+    var jobId = await service.StartOptimizationAsync(request, ctx.RequestAborted);
+    return Results.Ok(new { JobId = jobId });
+}).WithName("StartOptimization").WithOpenApi(op =>
+{
+    op.Summary = "Starts team optimization based on console logic";
+    op.Description = "Starts a background job to compute best teams; use the progress and result endpoints to track and fetch results.";
+    return op;
+});
+
+// Server-Sent Events (SSE) progress stream
+app.MapGet("/api/optimize/progress/{jobId}", async (string jobId, IOptimizationService service, HttpContext context) =>
+{
+    context.Response.Headers.CacheControl = "no-cache";
+    context.Response.Headers.Append("Content-Type", "text/event-stream");
+
+    await foreach (var update in service.StreamProgressAsync(jobId, context.RequestAborted))
+    {
+        var json = JsonSerializer.Serialize(update);
+        await context.Response.WriteAsync($"data: {json}\n\n");
+        await context.Response.Body.FlushAsync();
+    }
+});
+
+// Fetch result
+app.MapGet("/api/optimize/result/{jobId}", async (string jobId, IOptimizationService service) =>
+{
+    var result = await service.GetResultAsync(jobId);
+    return result is null ? Results.NotFound() : Results.Ok(result);
+}).WithName("GetOptimizationResult").WithOpenApi(op =>
+{
+    op.Summary = "Gets optimization result by job id";
+    op.Description = "Returns final top teams and timings once the optimization job completes.";
+    return op;
+});
 
 app.Run();

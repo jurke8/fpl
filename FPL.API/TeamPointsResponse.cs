@@ -43,4 +43,35 @@ public class TeamPointsResponse
     public List<List<string>> TeamByWeek { get; set; } = new();
     public List<string> CaptainsByWeek { get; set; } = new();
     public int BbGw { get; set; } = 0;
+
+    /// <summary>
+    /// Optional: Comparison data when two teams are provided
+    /// </summary>
+    public TeamPointsResponse? Opponent { get; set; }
+
+    /// <summary>
+    /// Optional: Differences between the primary team and the opponent team (primary - opponent)
+    /// </summary>
+    public TeamPointsDifference? Difference { get; set; }
 } 
+
+/// <summary>
+/// Model for differences between two team points results
+/// </summary>
+public class TeamPointsDifference
+{
+    /// <summary>
+    /// Gameweek-by-gameweek difference (Team1 - Team2)
+    /// </summary>
+    public List<double> GameweekPointsDelta { get; set; } = new();
+
+    /// <summary>
+    /// Total points difference (Team1 - Team2)
+    /// </summary>
+    public double TotalPointsDelta { get; set; }
+
+    /// <summary>
+    /// Team value difference (Team1 - Team2)
+    /// </summary>
+    public double? TeamValueDelta { get; set; }
+}

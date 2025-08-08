@@ -11,6 +11,11 @@ public class TeamPointsRequest
     public required List<string> PlayerNames { get; set; }
     
     /// <summary>
+    /// Optional second list of player names to compare against the first team. If provided, the API will return a comparison result.
+    /// </summary>
+    public List<string>? PlayerNames2 { get; set; }
+    
+    /// <summary>
     /// Starting gameweek (inclusive)
     /// </summary>
     public int StartGameweek { get; set; }
