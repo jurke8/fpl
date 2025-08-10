@@ -93,10 +93,15 @@ public static class IncludedPlayers
     ];
     public static readonly List<string> BanList =
     [
+        "Amad",
+        "Cunha",
+        "Ederson M.",
+        "Tosin",
+        "Mbeumo",
         // "Martinez",
         "M.Salah",
         "Maguire",
-        // "Minteh",
+        "Minteh",
         // "A.Becker",
         // "Gvardiol",
         // "Beto",

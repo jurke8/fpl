@@ -18,28 +18,38 @@ public class OptimizationService : IOptimizationService
 
     private readonly ConcurrentDictionary<string, Channel<OptimizationProgress>> progressByJob = new();
     private readonly ConcurrentDictionary<string, OptimizeTeamsResponse> resultByJob = new();
+    private readonly ConcurrentDictionary<string, CancellationTokenSource> ctsByJob = new();
 
     public OptimizationService(List<Root> rawPlayers)
     {
         this.rawPlayers = rawPlayers;
     }
 
-    public async Task<string> StartOptimizationAsync(OptimizeTeamsRequest request, CancellationToken ct = default)
+    public Task<string> StartOptimizationAsync(OptimizeTeamsRequest request, CancellationToken ct = default)
     {
         var jobId = Guid.NewGuid().ToString("N");
         var channel = Channel.CreateUnbounded<OptimizationProgress>();
         progressByJob[jobId] = channel;
+
+        // Create a job-scoped CTS so the job is NOT tied to the HTTP request cancellation
+        var jobCts = new CancellationTokenSource();
+        ctsByJob[jobId] = jobCts;
 
         _ = Task.Run(async () =>
         {
             var writer = channel.Writer;
             try
             {
-                await writer.WriteAsync(new OptimizationProgress { Stage = "Import", Message = "Importing and mapping players..." }, ct);
+                // Initial progress write without request-scoped cancellation token
+                await writer.WriteAsync(new OptimizationProgress { Stage = "Import", Message = "Importing and mapping players..." });
 
-                var response = await RunOptimizationAsync(request, p => writer.TryWrite(p), ct);
+                var response = await RunOptimizationAsync(request, p => writer.TryWrite(p), jobCts.Token);
                 resultByJob[jobId] = response;
                 writer.TryWrite(new OptimizationProgress { Stage = "Done", Message = "Completed", Percent = 100 });
+            }
+            catch (OperationCanceledException)
+            {
+                writer.TryWrite(new OptimizationProgress { Stage = "Canceled", Message = "Job canceled." });
             }
             catch (Exception ex)
             {
@@ -48,10 +58,14 @@ public class OptimizationService : IOptimizationService
             finally
             {
                 writer.Complete();
+                if (ctsByJob.TryRemove(jobId, out var cts))
+                {
+                    cts.Dispose();
+                }
             }
-        }, ct);
+        }, CancellationToken.None);
 
-        return jobId;
+        return Task.FromResult(jobId);
     }
 
     public async IAsyncEnumerable<OptimizationProgress> StreamProgressAsync(string jobId, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default)
