@@ -471,6 +471,11 @@ app.MapPost("/api/suggest-transfers", (SuggestTransfersRequest request) =>
             var endGw = Math.Min(38, request.CurrentGameweek + request.LookaheadGameweeks - 1);
             var numberOfGws = endGw - startGw + 1;
 
+            // Prepare ban list (case-insensitive)
+            var bannedNames = new HashSet<string>(request.BanList ?? new List<string>(), StringComparer.OrdinalIgnoreCase);
+            // Prepare locked players (case-insensitive) - these should not be suggested as transfer OUT
+            var lockedNames = new HashSet<string>(request.LockedPlayers ?? new List<string>(), StringComparer.OrdinalIgnoreCase);
+
             // Find original team players
             var notFound = new List<string>();
             var originalTeamPlayers = new List<Player>(capacity: 11);
@@ -541,8 +546,12 @@ app.MapPost("/api/suggest-transfers", (SuggestTransfersRequest request) =>
 
                 foreach (var outPlayer in workingTeam)
                 {
+                    // Skip if out player is locked
+                    if (lockedNames.Contains(outPlayer.Name))
+                        continue;
+
                     // Only consider replacements of the same position to keep roster coherent
-                    var candidates = allMappedPlayers.Where(p => p.Position == outPlayer.Position && !nameInCurrent.Contains(p.Name));
+                    var candidates = allMappedPlayers.Where(p => p.Position == outPlayer.Position && !nameInCurrent.Contains(p.Name) && !bannedNames.Contains(p.Name));
 
                     foreach (var candidate in candidates)
                     {
@@ -608,7 +617,7 @@ app.MapPost("/api/suggest-transfers", (SuggestTransfersRequest request) =>
     .WithOpenApi(operation =>
     {
         operation.Summary = "Suggests best transfers to maximize predicted points over a lookahead horizon";
-        operation.Description = "Given an XI, number of free transfers, current gameweek, and lookahead length, returns up to N transfers (same-position swaps, max 3 per club) that maximize predicted points across the horizon.";
+        operation.Description = "Given a 15-man squad, number of free transfers, current gameweek, and lookahead length, returns up to N transfers (same-position swaps, max 3 per club) that maximize predicted points across the horizon. Optionally provide a ban list so specific players are never suggested as incoming transfers, and a locked players list so those players are never suggested as transfers OUT.";
         return operation;
     });
 

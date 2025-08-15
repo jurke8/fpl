@@ -105,10 +105,11 @@ public class OptimizationService : IOptimizationService
 
         // Data cleaning
         players.RemoveAll(p => p.CurrentPrice is null || p.Value == 0);
+        var complexity = Math.Max(1, req.Complexity);
 
         // Selecting top points and value players
-        var topPointsPlayer = players.OrderByDescending(p => p.TotalPredicted).Take(200);
-        var topValuePlayers = players.OrderByDescending(o => o.Value).Take(200);
+        var topPointsPlayer = players.OrderByDescending(p => p.TotalPredicted).Take(complexity);
+        var topValuePlayers = players.OrderByDescending(o => o.Value).Take(complexity);
         var concatedPlayers = topPointsPlayer.Concat(topValuePlayers).Distinct().OrderByDescending(p => p.Value).ToList();
 
         // Apply include/locked/ban overrides passed in request if any
@@ -184,7 +185,6 @@ public class OptimizationService : IOptimizationService
         if (validFwds.Count == 0) validFwds = combinations.Where(c => c.Position == PositionEnum.FWD).ToList();
 
         // Select top combinations by price and value with complexity parameter
-        var complexity = Math.Max(1, req.Complexity);
         var gks = validGks.OrderByDescending(c => c.Value).Take(complexity / 5)
             .Union(validGks.OrderByDescending(c => c.PredictedPoints / c.NumberOfPlayers).Take(complexity))
             .Distinct().ToList();
